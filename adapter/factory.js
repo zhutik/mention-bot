@@ -13,7 +13,7 @@ function getAdapter(name) {
   try {
     switch (name.toLowerCase()) {
       case 'github':
-        return require('./github')
+        return require('./github');
     }
   } catch (e) {
     console.error(e);

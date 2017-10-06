@@ -85,7 +85,7 @@ function GithubInstance() {
 
     getInstance: function () {
       return github;
-    }
+    },
   };
 }
 

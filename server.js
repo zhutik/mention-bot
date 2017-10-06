@@ -45,12 +45,14 @@ function getDefaultMessageGenerator(findPotentialReviewers) {
       '%s, thanks for your PR! ' +
       '%se identified %s to be%s potential reviewer%s.',
       pullRequester,
-      findPotentialReviewers ? 'By analyzing the history of the files in this pull request, w' : 'W',
+      findPotentialReviewers
+        ? 'By analyzing the history of the files in this pull request, w'
+        : 'W',
       buildMentionSentence(reviewers),
       reviewers.length > 1 ? '' : ' a',
       reviewers.length > 1 ? 's' : ''
     );
-  }
+  };
 }
 
 function configMessageGenerator(message, reviewers, pullRequester) {
@@ -61,19 +63,22 @@ function configMessageGenerator(message, reviewers, pullRequester) {
 function getRepoConfig(request) {
   return new Promise(function (resolve, reject) {
     let callback = function (err, result) {
-        if (err) {
-            reject(err);
-            return;
-        }
+      if (err) {
+        reject(err);
+        return;
+      }
+
+      try {
+        const data = JSON.parse(result.data);
+        resolve(data);
+      } catch (e) {
         try {
-            const data = JSON.parse(result.data);
-            resolve(data);
+          e.repoConfig = result.data;
         } catch (e) {
-            try {
-                e.repoConfig = result.data;
-            } catch (e) {}
-            reject(e);
         }
+
+        reject(e);
+      }
     };
 
     github.getRepositoryContent(request, callback);
@@ -100,7 +105,7 @@ async function work(body) {
     requiredOrgs: [],
     findPotentialReviewers: true,
     actions: ['opened'],
-    branches:[],
+    branches: [],
     skipAlreadyAssignedPR: false,
     skipAlreadyMentionedPR: false,
     delayed: false,
@@ -117,9 +122,9 @@ async function work(body) {
     try {
       repoConfig = {
         ...repoConfig,
-        ...JSON.parse(process.env.MENTION_BOT_CONFIG)
+        ...JSON.parse(process.env.MENTION_BOT_CONFIG),
       };
-    } catch(e) {
+    } catch (e) {
       console.error(
         'Error attempting to read the config from the environment variable ' +
         ' MENTION_BOT_CONFIG'
@@ -136,17 +141,18 @@ async function work(body) {
       ref: data.pull_request.base.ref,
       path: CONFIG_PATH,
       headers: {
-        Accept: 'application/vnd.github.v3.raw+json'
-      }
-    }).catch(function(e) {
+        Accept: 'application/vnd.github.v3.raw+json',
+      },
+    }).catch(function (e) {
       if (e instanceof SyntaxError && repoConfig.actions.indexOf(data.action) !== -1) {
         // Syntax error while reading custom configuration file
         var errorLog = '';
         try {
-          jsonlint.parse(e.repoConfig)
-        } catch(err) {
+          jsonlint.parse(e.repoConfig);
+        } catch (err) {
           errorLog = err;
         }
+
         var message =
           'Unable to parse mention-bot custom configuration file due to a syntax error.\n' +
           'Please check the potential root causes below:\n\n' +
@@ -157,19 +163,23 @@ async function work(body) {
           '```\n' + errorLog + '\n```';
         createComment(data, message);
       }
-    });
-    repoConfig = {...repoConfig, ...configRes};
+    }
+    );
+    repoConfig = { ...repoConfig, ...configRes };
   } catch (e) {
     if (e.code === 404 &&
         e.message.match(/message.*Not Found.*documentation_url.*developer.github.com/)) {
-      console.log('Couldn\'t find ' + CONFIG_PATH + ' in repo. Continuing with default configuration.');
+      console.log(
+        'Couldn\'t find ' + CONFIG_PATH + ' in repo. Continuing with default configuration.'
+      );
     } else {
       console.error(e);
     }
   }
 
   function isValid(repoConfig, data) {
-    if (repoConfig.branches && repoConfig.branches.length > 0 && repoConfig.branches.indexOf(data.pull_request.base.ref) === -1) {
+    if (repoConfig.branches && repoConfig.branches.length > 0
+      && repoConfig.branches.indexOf(data.pull_request.base.ref) === -1) {
       console.log(
         'Skipping because base ref is "' + data.pull_request.base.ref + '".',
         'We only care about: "' + repoConfig.branches.join("', '") + '"'
@@ -186,7 +196,11 @@ async function work(body) {
     }
 
     if (repoConfig.withLabel && data.label && data.label.name != repoConfig.withLabel) {
-      console.log('Skipping because pull request does not have label: "' + repoConfig.withLabel + '".');
+      console.log(
+        'Skipping because pull request does not have label: "'
+        + repoConfig.withLabel + '".'
+      );
+
       return false;
     }
 
@@ -197,7 +211,7 @@ async function work(body) {
     }
 
     if (repoConfig.skipCollaboratorPR) {
-      const callback = function(err, res){
+      const callback = function (err, res) {
         if (res && res.meta.status === '204 No Content') {
           console.log('Skipping because pull request is made by collaborator.');
           return false;
@@ -208,7 +222,7 @@ async function work(body) {
         {
           owner: data.repository.owner.login, // 'fbsamples'
           repo: data.repository.name, // 'bot-testing'
-          username: data.pull_request.user.login
+          username: data.pull_request.user.login,
         },
         callback
       );
@@ -290,7 +304,7 @@ async function work(body) {
       return;
     }
 
-    const callback = function(err) {
+    const callback = function (err) {
       if (err) {
         if (typeof reject === 'function') {
           return reject(err);
@@ -303,10 +317,10 @@ async function work(body) {
         owner: data.repository.owner.login, // 'fbsamples'
         repo: data.repository.name, // 'bot-testing'
         number: data.pull_request.number, // 23
-        body: message
+        body: message,
       },
       callback
-    )
+    );
   }
 
   function assignReviewer(data, reviewers, reject) {
@@ -314,7 +328,7 @@ async function work(body) {
       return;
     }
 
-    const callback = function(err) {
+    const callback = function (err) {
       if (err) {
         if (typeof reject === 'function') {
           return reject(err);
@@ -327,7 +341,7 @@ async function work(body) {
         owner: data.repository.owner.login, // 'fbsamples'
         repo: data.repository.name, // 'bot-testing'
         number: data.pull_request.number, // 23
-        assignees: reviewers
+        assignees: reviewers,
       },
       callback
     );
@@ -338,7 +352,7 @@ async function work(body) {
       return;
     }
 
-    const callback = function(err) {
+    const callback = function (err) {
       if (err) {
         if (typeof reject === 'function') {
           return reject(err);
@@ -351,19 +365,20 @@ async function work(body) {
         owner: data.repository.owner.login, // 'fbsamples'
         repo: data.repository.name, // 'bot-testing'
         number: data.pull_request.number, // 23
-        reviewers: reviewers
+        reviewers: reviewers,
       },
       callback
     );
   }
 
   function getComments(data, page) {
-    return new Promise(function(resolve, reject) {
+    return new Promise(function (resolve, reject) {
 
-      const callback = function(err, result) {
+      const callback = function (err, result) {
         if (err) {
           reject(err);
         }
+
         resolve(result);
       };
 
@@ -373,7 +388,7 @@ async function work(body) {
           repo: data.repository.name, // 'bot-testing'
           number: data.pull_request.number, // 23
           page: page, // 1
-          per_page: 100 // maximum supported
+          per_page: 100, // maximum supported
         },
         callback
       );
@@ -384,11 +399,15 @@ async function work(body) {
     var page;
     var comments = [[]];
 
-    for (page = 1; comments.length != 0; ++page) {
+    for (page = 1; comments.length !== 0; ++page) {
       comments = await getComments(data, page);
-      if (comments.find(function(comment) {
-        return comment.body == message;
-      })) {
+
+      if (comments.find(
+        function (comment) {
+          return comment.body === message;
+        }
+        )
+      ) {
         console.log('Skipping because there is already existing an exact mention.');
         return;
       }
@@ -396,9 +415,9 @@ async function work(body) {
   }
 
   if (repoConfig.delayed) {
-    schedule.performAt(schedule.parse(repoConfig.delayedUntil), function(resolve, reject) {
+    schedule.performAt(schedule.parse(repoConfig.delayedUntil), function (resolve, reject) {
 
-      const callback = function(err, currentData) {
+      const callback = function (err, currentData) {
         if (err) {
           reject(err);
           return;
@@ -418,7 +437,7 @@ async function work(body) {
         {
           owner: data.repository.owner.login,
           repo: data.repository.name,
-          number: data.pull_request.number
+          number: data.pull_request.number,
         },
         callback
       );
@@ -432,11 +451,11 @@ async function work(body) {
   return;
 };
 
-app.post('/', function(req, res) {
-  req.pipe(bl(function(err, body) {
+app.post('/', function (req, res) {
+  req.pipe(bl(function (err, body) {
     work(body)
-      .then(function() { res.end(); })
-      .catch(function(e) {
+      .then(function () { res.end(); })
+      .catch(function (e) {
         console.error(e);
         console.error(e.stack);
         res.status(500).send('Internal Server Error');
@@ -444,7 +463,7 @@ app.post('/', function(req, res) {
   }));
 });
 
-app.get('/', function(req, res) {
+app.get('/', function (req, res) {
   res.send(
     'GitHub Mention Bot Active. ' +
     'Go to https://github.com/facebook/mention-bot for more information.'
@@ -453,6 +472,6 @@ app.get('/', function(req, res) {
 
 app.set('port', process.env.PORT || 5000);
 
-app.listen(app.get('port'), function() {
+app.listen(app.get('port'), function () {
   console.log('Listening on port', app.get('port'));
 });
