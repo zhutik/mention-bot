@@ -10,7 +10,6 @@
  */
 
 var bl = require('bl');
-var config = require('./config');
 var express = require('express');
 var fs = require('fs');
 var mentionBot = require('./mention-bot.js');
@@ -18,54 +17,17 @@ var messageGenerator = require('./message.js');
 var util = require('util');
 var schedule = require('./schedule.js');
 
-var GitHubApi = require('github');
 var jsonlint = require('jsonlint');
+var adapterFactory = require('./adapter/factory');
 
 var CONFIG_PATH = '.mention-bot';
 
-if (!process.env.GITHUB_TOKEN) {
-  console.error('The bot was started without a GitHub account to post with.');
-  console.error('To get started:');
-  console.error('1) Create a new account for the bot');
-  console.error('2) Settings > Personal access tokens > Generate new token');
-  console.error('3) Only check `public_repo` and click Generate token');
-  console.error('4) Run the following command:');
-  console.error('GITHUB_TOKEN=insert_token_here npm start');
-  console.error('5) Run the following command in another tab:');
-  console.error('curl -X POST -d @__tests__/data/23.webhook http://localhost:5000/');
-  console.error('6) Check if it has commented here: https://github.com/fbsamples/bot-testing/pull/23');
-  process.exit(1);
-}
-
-if (!process.env.GITHUB_USER) {
-  console.warn(
-    'There was no GitHub user detected.',
-    'This is fine, but mention-bot won\'t work with private repos.'
-  );
-  console.warn(
-    'To make mention-bot work with private repos, please expose',
-    'GITHUB_USER and GITHUB_PASSWORD as environment variables.',
-    'The username and password must have access to the private repo',
-    'you want to use.'
-  );
-}
-
-var github = new GitHubApi({
-  host: config.github.apiHost,
-  pathPrefix: config.github.pathPrefix,
-  protocol: config.github.protocol,
-  port: config.github.port
-});
-
-github.authenticate({
-  type: 'oauth',
-  token: process.env.GITHUB_TOKEN
-});
+var github = adapterFactory.getAdapter('github');
 
 var app = express();
 
 function buildMentionSentence(reviewers) {
-  var atReviewers = reviewers.map(function(owner) { return '@' + owner; });
+  var atReviewers = reviewers.map(function (owner) { return '@' + owner; });
 
   if (reviewers.length === 1) {
     return atReviewers[0];
@@ -78,17 +40,19 @@ function buildMentionSentence(reviewers) {
 }
 
 function getDefaultMessageGenerator(findPotentialReviewers) {
-  return function(reviewers, pullRequester) {
+  return function (reviewers, pullRequester) {
     return util.format(
       '%s, thanks for your PR! ' +
       '%se identified %s to be%s potential reviewer%s.',
       pullRequester,
-      findPotentialReviewers ? 'By analyzing the history of the files in this pull request, w' : 'W',
+      findPotentialReviewers
+        ? 'By analyzing the history of the files in this pull request, w'
+        : 'W',
       buildMentionSentence(reviewers),
       reviewers.length > 1 ? '' : ' a',
       reviewers.length > 1 ? 's' : ''
     );
-  }
+  };
 }
 
 function configMessageGenerator(message, reviewers, pullRequester) {
@@ -97,22 +61,27 @@ function configMessageGenerator(message, reviewers, pullRequester) {
 }
 
 function getRepoConfig(request) {
-  return new Promise(function(resolve, reject) {
-    github.repos.getContent(request, function(err, result) {
+  return new Promise(function (resolve, reject) {
+    let callback = function (err, result) {
       if (err) {
         reject(err);
         return;
       }
+
       try {
-        var data = JSON.parse(result.data);
+        const data = JSON.parse(result.data);
         resolve(data);
       } catch (e) {
         try {
           e.repoConfig = result.data;
-        } catch (e) {}
+        } catch (e) {
+        }
+
         reject(e);
       }
-    });
+    };
+
+    github.getRepositoryContent(request, callback);
   });
 }
 
@@ -136,7 +105,7 @@ async function work(body) {
     requiredOrgs: [],
     findPotentialReviewers: true,
     actions: ['opened'],
-    branches:[],
+    branches: [],
     skipAlreadyAssignedPR: false,
     skipAlreadyMentionedPR: false,
     delayed: false,
@@ -153,9 +122,9 @@ async function work(body) {
     try {
       repoConfig = {
         ...repoConfig,
-        ...JSON.parse(process.env.MENTION_BOT_CONFIG)
+        ...JSON.parse(process.env.MENTION_BOT_CONFIG),
       };
-    } catch(e) {
+    } catch (e) {
       console.error(
         'Error attempting to read the config from the environment variable ' +
         ' MENTION_BOT_CONFIG'
@@ -172,17 +141,18 @@ async function work(body) {
       ref: data.pull_request.base.ref,
       path: CONFIG_PATH,
       headers: {
-        Accept: 'application/vnd.github.v3.raw+json'
-      }
-    }).catch(function(e) {
+        Accept: 'application/vnd.github.v3.raw+json',
+      },
+    }).catch(function (e) {
       if (e instanceof SyntaxError && repoConfig.actions.indexOf(data.action) !== -1) {
         // Syntax error while reading custom configuration file
         var errorLog = '';
         try {
-          jsonlint.parse(e.repoConfig)
-        } catch(err) {
+          jsonlint.parse(e.repoConfig);
+        } catch (err) {
           errorLog = err;
         }
+
         var message =
           'Unable to parse mention-bot custom configuration file due to a syntax error.\n' +
           'Please check the potential root causes below:\n\n' +
@@ -193,19 +163,23 @@ async function work(body) {
           '```\n' + errorLog + '\n```';
         createComment(data, message);
       }
-    });
-    repoConfig = {...repoConfig, ...configRes};
+    }
+    );
+    repoConfig = { ...repoConfig, ...configRes };
   } catch (e) {
     if (e.code === 404 &&
         e.message.match(/message.*Not Found.*documentation_url.*developer.github.com/)) {
-      console.log('Couldn\'t find ' + CONFIG_PATH + ' in repo. Continuing with default configuration.');
+      console.log(
+        'Couldn\'t find ' + CONFIG_PATH + ' in repo. Continuing with default configuration.'
+      );
     } else {
       console.error(e);
     }
   }
 
   function isValid(repoConfig, data) {
-    if (repoConfig.branches && repoConfig.branches.length > 0 && repoConfig.branches.indexOf(data.pull_request.base.ref) === -1) {
+    if (repoConfig.branches && repoConfig.branches.length > 0
+      && repoConfig.branches.indexOf(data.pull_request.base.ref) === -1) {
       console.log(
         'Skipping because base ref is "' + data.pull_request.base.ref + '".',
         'We only care about: "' + repoConfig.branches.join("', '") + '"'
@@ -221,29 +195,37 @@ async function work(body) {
       return false;
     }
 
-    if (repoConfig.withLabel && data.label &&
-        data.label.name != repoConfig.withLabel) {
-      console.log('Skipping because pull request does not have label: "' + repoConfig.withLabel + '".');
+    if (repoConfig.withLabel && data.label && data.label.name != repoConfig.withLabel) {
+      console.log(
+        'Skipping because pull request does not have label: "'
+        + repoConfig.withLabel + '".'
+      );
+
       return false;
     }
 
     if (repoConfig.skipTitle &&
-        data.pull_request.title.indexOf(repoConfig.skipTitle) > -1) {
+      data.pull_request.title.indexOf(repoConfig.skipTitle) > -1) {
       console.log('Skipping because pull request title contains: "' + repoConfig.skipTitle + '".');
       return false;
     }
 
     if (repoConfig.skipCollaboratorPR) {
-      github.repos.checkCollaborator({
-        owner: data.repository.owner.login, // 'fbsamples'
-        repo: data.repository.name, // 'bot-testing'
-        username: data.pull_request.user.login
-      }, function(err, res){
+      const callback = function (err, res) {
         if (res && res.meta.status === '204 No Content') {
           console.log('Skipping because pull request is made by collaborator.');
           return false;
         }
-      });
+      };
+
+      github.checkCollaborator(
+        {
+          owner: data.repository.owner.login, // 'fbsamples'
+          repo: data.repository.name, // 'bot-testing'
+          username: data.pull_request.user.login,
+        },
+        callback
+      );
     }
 
     if (repoConfig.skipAlreadyAssignedPR &&
@@ -265,7 +247,7 @@ async function work(body) {
     }
 
     if (repoConfig.skipTitle &&
-        data.pull_request.title.indexOf(repoConfig.skipTitle) > -1) {
+      data.pull_request.title.indexOf(repoConfig.skipTitle) > -1) {
       console.log('Skipping because pull request title contains: "' + repoConfig.skipTitle + '".');
       return false;
     }
@@ -291,7 +273,7 @@ async function work(body) {
     data.repository.private, //true or false
     org, //the org name of the repo
     repoConfig,
-    github
+    github.getInstance()
   );
 
   console.log('Reviewers:', reviewers);
@@ -322,18 +304,23 @@ async function work(body) {
       return;
     }
 
-    github.issues.createComment({
-      owner: data.repository.owner.login, // 'fbsamples'
-      repo: data.repository.name, // 'bot-testing'
-      number: data.pull_request.number, // 23
-      body: message
-    }, function(err) {
+    const callback = function (err) {
       if (err) {
         if (typeof reject === 'function') {
           return reject(err);
         }
       }
-    })
+    };
+
+    github.createComment(
+      {
+        owner: data.repository.owner.login, // 'fbsamples'
+        repo: data.repository.name, // 'bot-testing'
+        number: data.pull_request.number, // 23
+        body: message,
+      },
+      callback
+    );
   }
 
   function assignReviewer(data, reviewers, reject) {
@@ -341,18 +328,23 @@ async function work(body) {
       return;
     }
 
-    github.issues.edit({
-      owner: data.repository.owner.login, // 'fbsamples'
-      repo: data.repository.name, // 'bot-testing'
-      number: data.pull_request.number, // 23
-      assignees: reviewers
-    }, function(err) {
+    const callback = function (err) {
       if (err) {
         if (typeof reject === 'function') {
           return reject(err);
         }
       }
-    });
+    };
+
+    github.assignReviewer(
+      {
+        owner: data.repository.owner.login, // 'fbsamples'
+        repo: data.repository.name, // 'bot-testing'
+        number: data.pull_request.number, // 23
+        assignees: reviewers,
+      },
+      callback
+    );
   }
 
   function requestReview(data, reviewers, reject) {
@@ -360,34 +352,46 @@ async function work(body) {
       return;
     }
 
-    github.pullRequests.createReviewRequest({
-      owner: data.repository.owner.login, // 'fbsamples'
-      repo: data.repository.name, // 'bot-testing'
-      number: data.pull_request.number, // 23
-      reviewers: reviewers
-    }, function(err) {
+    const callback = function (err) {
       if (err) {
         if (typeof reject === 'function') {
           return reject(err);
         }
       }
-    });
-  }
+    };
 
-  function getComments(data, page) {
-    return new Promise(function(resolve, reject) {
-      github.issues.getComments({
+    github.createReviewRequest(
+      {
         owner: data.repository.owner.login, // 'fbsamples'
         repo: data.repository.name, // 'bot-testing'
         number: data.pull_request.number, // 23
-        page: page, // 1
-        per_page: 100 // maximum supported
-      }, function(err, result) {
+        reviewers: reviewers,
+      },
+      callback
+    );
+  }
+
+  function getComments(data, page) {
+    return new Promise(function (resolve, reject) {
+
+      const callback = function (err, result) {
         if (err) {
           reject(err);
         }
+
         resolve(result);
-      });
+      };
+
+      github.getComments(
+        {
+          owner: data.repository.owner.login, // 'fbsamples'
+          repo: data.repository.name, // 'bot-testing'
+          number: data.pull_request.number, // 23
+          page: page, // 1
+          per_page: 100, // maximum supported
+        },
+        callback
+      );
     });
   }
 
@@ -395,11 +399,15 @@ async function work(body) {
     var page;
     var comments = [[]];
 
-    for (page = 1; comments.length != 0; ++page) {
+    for (page = 1; comments.length !== 0; ++page) {
       comments = await getComments(data, page);
-      if (comments.find(function(comment) {
-        return comment.body == message;
-      })) {
+
+      if (comments.find(
+        function (comment) {
+          return comment.body === message;
+        }
+        )
+      ) {
         console.log('Skipping because there is already existing an exact mention.');
         return;
       }
@@ -407,12 +415,9 @@ async function work(body) {
   }
 
   if (repoConfig.delayed) {
-    schedule.performAt(schedule.parse(repoConfig.delayedUntil), function(resolve, reject) {
-      github.pullRequests.get({
-        owner: data.repository.owner.login,
-        repo: data.repository.name,
-        number: data.pull_request.number
-      }, function(err, currentData) {
+    schedule.performAt(schedule.parse(repoConfig.delayedUntil), function (resolve, reject) {
+
+      const callback = function (err, currentData) {
         if (err) {
           reject(err);
           return;
@@ -426,7 +431,16 @@ async function work(body) {
         createComment(currentData, message, reject);
         assignReviewer(currentData, reviewers, reject);
         requestReview(currentData, reviewers, reject);
-      });
+      };
+
+      github.getPullRequest(
+        {
+          owner: data.repository.owner.login,
+          repo: data.repository.name,
+          number: data.pull_request.number,
+        },
+        callback
+      );
     });
   } else {
     createComment(data, message);
@@ -437,11 +451,11 @@ async function work(body) {
   return;
 };
 
-app.post('/', function(req, res) {
-  req.pipe(bl(function(err, body) {
+app.post('/', function (req, res) {
+  req.pipe(bl(function (err, body) {
     work(body)
-      .then(function() { res.end(); })
-      .catch(function(e) {
+      .then(function () { res.end(); })
+      .catch(function (e) {
         console.error(e);
         console.error(e.stack);
         res.status(500).send('Internal Server Error');
@@ -449,7 +463,7 @@ app.post('/', function(req, res) {
   }));
 });
 
-app.get('/', function(req, res) {
+app.get('/', function (req, res) {
   res.send(
     'GitHub Mention Bot Active. ' +
     'Go to https://github.com/facebook/mention-bot for more information.'
@@ -458,6 +472,6 @@ app.get('/', function(req, res) {
 
 app.set('port', process.env.PORT || 5000);
 
-app.listen(app.get('port'), function() {
+app.listen(app.get('port'), function () {
   console.log('Listening on port', app.get('port'));
 });

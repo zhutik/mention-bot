@@ -10,5 +10,5 @@ exports.github = {
   apiHost: process.env.GHE_API_HOST || mergedConfig.gheHost || 'api.github.com',
   protocol: process.env.GHE_PROTOCOL || mergedConfig.gheProtocol || 'https',
   pathPrefix: process.env.GHE_PATH_PREFIX || mergedConfig.ghePathPrefix,
-  port: process.env.GHE_PORT || mergedConfig.ghePort || 443
+  port: process.env.GHE_PORT || mergedConfig.ghePort || 443,
 };
